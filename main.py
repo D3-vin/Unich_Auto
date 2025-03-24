@@ -313,80 +313,78 @@ class Unich:
 
     async def process_account_async(self, email, token, proxy=None):
         """Asynchronous processing of one account with token"""
-        while True:
-            try:
-                self.print_account_message(email, proxy, Fore.CYAN, "Processing account")
+        try:
+            self.print_account_message(email, proxy, Fore.CYAN, "Processing account")
+            
+            # Check referral information
+            ref_success, ref_data = await self.get_ref(token, proxy)
+            if ref_success and isinstance(ref_data, dict):
+                ref_info = ref_data.get("data", {}).get("referrer", {})
+                current_ref_code = ref_info.get("refCode")
                 
-                # Check referral information
-                ref_success, ref_data = await self.get_ref(token, proxy)
-                if ref_success and isinstance(ref_data, dict):
-                    ref_info = ref_data.get("data", {}).get("referrer", {})
-                    current_ref_code = ref_info.get("refCode")
-                    
-                    if not ref_info.get("referred", False):
-                        self.print_account_message(email, proxy, Fore.CYAN, f"Adding referral code {REF_CODE}")
-                        await self.add_ref(token, proxy=proxy)
-                        await self.async_delay()
-                    else:
-                        self.print_account_message(email, proxy, Fore.GREEN, f"Referral code {current_ref_code} already added")
-                
-                # Check mining status
-                mining_success, mining_data = await self.get_recent_mining(token, proxy)
-                if mining_success and isinstance(mining_data, dict):
-                    mining_info = mining_data.get("data", {})
-                    is_mining = mining_info.get("isMining", False)
-                    balance = mining_info.get("mUn", 0)
-                    daily_reward = mining_info.get("miningDailyReward", 0)
-                    next_mining = mining_info.get("nextMining", "")
-                    
-                    self.print_account_message(
-                        email, proxy, Fore.CYAN, 
-                        f"Mining status: {'Active' if is_mining else 'Inactive'}, "
-                        f"Balance: {balance} mUn, "
-                        f"Daily reward: {daily_reward} mUn"
-                    )
-                    
-                    if not is_mining:
-                        self.print_account_message(email, proxy, Fore.CYAN, "Starting mining")
-                        start_success, _ = await self.start_mining(token, proxy)
-                        if start_success:
-                            self.print_account_message(email, proxy, Fore.GREEN, "Mining successfully started")
-                        await self.async_delay()
-                
-                # Get and process social tasks
-                social_success, social_data = await self.get_social_list(token, proxy)
-                if social_success and isinstance(social_data, dict):
-                    tasks_data = social_data.get("data", {}).get("items", [])
-                    unclaimed_tasks = [task for task in tasks_data if not task.get("claimed", False)]
-                    
-                    if unclaimed_tasks:
-                        self.print_account_message(email, proxy, Fore.CYAN, f"Found {len(unclaimed_tasks)} unclaimed tasks")
-                        
-                        for task in unclaimed_tasks:
-                            task_id = task["id"]
-                            task_title = task["title"]
-                            task_reward = task["pointReward"]
-                            self.print_account_message(email, proxy, Fore.CYAN, f"Processing task: {task_title} (Reward: {task_reward} points)")
-                            
-                            claim_success, _ = await self.claim_social_reward(token, task_id, proxy)
-                            if claim_success:
-                                self.print_account_message(email, proxy, Fore.GREEN, f"Successfully claimed reward for: {task_title}")
-                            await self.async_delay()
-                    else:
-                        self.print_account_message(email, proxy, Fore.GREEN, "All social tasks have been completed")
+                if not ref_info.get("referred", False):
+                    self.print_account_message(email, proxy, Fore.CYAN, f"Adding referral code {REF_CODE}")
+                    await self.add_ref(token, proxy=proxy)
+                    await self.async_delay()
                 else:
-                    self.print_account_message(email, proxy, Fore.YELLOW, "Failed to get social tasks list")
+                    self.print_account_message(email, proxy, Fore.GREEN, f"Referral code {current_ref_code} already added")
+            
+            # Check mining status
+            mining_success, mining_data = await self.get_recent_mining(token, proxy)
+            if mining_success and isinstance(mining_data, dict):
+                mining_info = mining_data.get("data", {})
+                is_mining = mining_info.get("isMining", False)
+                balance = mining_info.get("mUn", 0)
+                daily_reward = mining_info.get("miningDailyReward", 0)
+                next_mining = mining_info.get("nextMining", "")
                 
                 self.print_account_message(
-                    email, proxy, Fore.YELLOW, 
-                    f"Processing completed. Next cycle in {CYCLE_INTERVAL // 3600} hours"
+                    email, proxy, Fore.CYAN, 
+                    f"Mining status: {'Active' if is_mining else 'Inactive'}, "
+                    f"Balance: {balance} mUn, "
+                    f"Daily reward: {daily_reward} mUn"
                 )
-                await asyncio.sleep(CYCLE_INTERVAL)  # Wait 24 hours before next cycle
                 
-            except Exception as e:
-                self.print_account_message(email, proxy, Fore.RED, f"Error: {str(e)}")
-                self.print_account_message(email, proxy, Fore.YELLOW, "Retrying in 1 minute")
-                await asyncio.sleep(60)  # Wait a minute on error
+                if not is_mining:
+                    self.print_account_message(email, proxy, Fore.CYAN, "Starting mining")
+                    start_success, _ = await self.start_mining(token, proxy)
+                    if start_success:
+                        self.print_account_message(email, proxy, Fore.GREEN, "Mining successfully started")
+                    await self.async_delay()
+            
+            # Get and process social tasks
+            social_success, social_data = await self.get_social_list(token, proxy)
+            if social_success and isinstance(social_data, dict):
+                tasks_data = social_data.get("data", {}).get("items", [])
+                unclaimed_tasks = [task for task in tasks_data if not task.get("claimed", False)]
+                
+                if unclaimed_tasks:
+                    self.print_account_message(email, proxy, Fore.CYAN, f"Found {len(unclaimed_tasks)} unclaimed tasks")
+                    
+                    for task in unclaimed_tasks:
+                        task_id = task["id"]
+                        task_title = task["title"]
+                        task_reward = task["pointReward"]
+                        self.print_account_message(email, proxy, Fore.CYAN, f"Processing task: {task_title} (Reward: {task_reward} points)")
+                        
+                        claim_success, _ = await self.claim_social_reward(token, task_id, proxy)
+                        if claim_success:
+                            self.print_account_message(email, proxy, Fore.GREEN, f"Successfully claimed reward for: {task_title}")
+                        await self.async_delay()
+                else:
+                    self.print_account_message(email, proxy, Fore.GREEN, "All social tasks have been completed")
+            else:
+                self.print_account_message(email, proxy, Fore.YELLOW, "Failed to get social tasks list")
+            
+            self.print_account_message(
+                email, proxy, Fore.YELLOW, 
+                f"Processing completed. Next cycle in {CYCLE_INTERVAL // 3600} hours"
+            )
+            
+        except Exception as e:
+            self.print_account_message(email, proxy, Fore.RED, f"Error: {str(e)}")
+            self.print_account_message(email, proxy, Fore.YELLOW, "Retrying in 1 minute")
+            await asyncio.sleep(60)  # Wait a minute on error
 
     async def auth_account_async(self, account, proxy=None):
         """Asynchronous authentication"""
@@ -466,11 +464,7 @@ class Unich:
                 print(f"{Fore.RED + Style.BRIGHT}Invalid input. Please enter a number.{Style.RESET_ALL}")
 
     async def process_all_accounts_async(self, mode="farm"):
-        """Main asynchronous function that starts processing all accounts
-        
-        Args:
-            mode: Operation mode - "auth" for authentication or "farm" for mining
-        """
+        """Main asynchronous function that starts processing all accounts"""
         while True:
             try:
                 # Read accounts and proxies
@@ -528,6 +522,10 @@ class Unich:
                 
                 # Start all tasks simultaneously
                 await asyncio.gather(*tasks)
+                
+                # Wait for next cycle
+                self.log(f"{Fore.CYAN}Waiting {CYCLE_INTERVAL // 3600} hours before next cycle{Style.RESET_ALL}")
+                await asyncio.sleep(CYCLE_INTERVAL)
                 
             except Exception as e:
                 self.log(f"{Fore.RED + Style.BRIGHT}Global error: {str(e)}{Style.RESET_ALL}")
