@@ -480,48 +480,71 @@ class Unich:
                 email_to_token = self.get_tokens_by_emails([acc["email"] for acc in accounts])
                 
                 # List of tasks for asynchronous execution
-                tasks = []
+                processing_tasks = []
+                auth_tasks = []
                 
                 # First, count total accounts and log the start
                 total_accounts = len(accounts)
                 self.log(f"{Fore.CYAN}Starting parallel processing of {total_accounts} accounts{Style.RESET_ALL}")
                 
-                # Check each account and add task
+                # Prepare tasks for accounts with and without tokens
                 for account in accounts:
                     email = account["email"]
                     proxy = self.get_next_proxy_for_account(email)
                     
-                    # If account already has token, start processing
+                    # If account already has token, add to processing tasks
                     if email in email_to_token:
                         token = email_to_token[email]
                         self.print_account_message(email, proxy, Fore.GREEN, "Token found in cache")
                         
                         # In farm mode start mining, in auth mode only authenticate
                         if mode == "farm":
-                            tasks.append(self.process_account_async(email, token, proxy))
+                            processing_tasks.append((email, token, proxy))
                     else:
-                        # If no token, authenticate first
-                        self.print_account_message(email, proxy, Fore.YELLOW, "Token not found, performing authentication")
-                        
-                        # Start authentication
-                        success, token = await self.auth_account_async(account, proxy)
-                        
-                        if success and token:
-                            self.print_account_message(email, proxy, Fore.GREEN, "Authentication successful")
-                            
-                            # In farm mode start mining
-                            if mode == "farm":
-                                tasks.append(self.process_account_async(email, token, proxy))
-                        else:
-                            self.print_account_message(email, proxy, Fore.RED, "Authentication failed")
+                        # If no token, prepare for authentication
+                        self.print_account_message(email, proxy, Fore.YELLOW, "Token not found, queued for authentication")
+                        # Add to auth tasks
+                        auth_tasks.append((account, proxy))
                 
-                # If in auth mode and all accounts processed, exit loop
-                if mode == "auth" or not tasks:
+                # Process authentication tasks in parallel
+                if auth_tasks:
+                    self.log(f"{Fore.CYAN}Authenticating {len(auth_tasks)} accounts in parallel{Style.RESET_ALL}")
+                    
+                    # Create coroutines for all auth tasks
+                    auth_coroutines = [self.auth_account_async(account, proxy) for account, proxy in auth_tasks]
+                    
+                    # Run all authentications in parallel
+                    auth_results = await asyncio.gather(*auth_coroutines, return_exceptions=True)
+                    
+                    # Process auth results and add successful ones to processing tasks
+                    for i, result in enumerate(auth_results):
+                        account, proxy = auth_tasks[i]
+                        email = account["email"]
+                        
+                        if isinstance(result, Exception):
+                            self.print_account_message(email, proxy, Fore.RED, f"Authentication error: {str(result)}")
+                        else:
+                            success, token = result
+                            if success and token:
+                                self.print_account_message(email, proxy, Fore.GREEN, "Authentication successful")
+                                
+                                # In farm mode start mining
+                                if mode == "farm":
+                                    processing_tasks.append((email, token, proxy))
+                            else:
+                                self.print_account_message(email, proxy, Fore.RED, "Authentication failed")
+                
+                # Create processing coroutines
+                process_coroutines = [self.process_account_async(email, token, proxy) for email, token, proxy in processing_tasks]
+                
+                # If in auth mode or no tasks, exit loop
+                if mode == "auth" or not process_coroutines:
                     self.log(f"{Fore.GREEN}Completed processing accounts in {mode.upper()} mode{Style.RESET_ALL}")
                     break
                 
-                # Start all tasks simultaneously
-                await asyncio.gather(*tasks)
+                # Start all processing tasks simultaneously
+                self.log(f"{Fore.CYAN}Starting mining for {len(process_coroutines)} accounts in parallel{Style.RESET_ALL}")
+                await asyncio.gather(*process_coroutines)
                 
                 # Wait for next cycle
                 self.log(f"{Fore.CYAN}Waiting {CYCLE_INTERVAL // 3600} hours before next cycle{Style.RESET_ALL}")
