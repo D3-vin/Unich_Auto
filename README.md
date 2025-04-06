@@ -17,7 +17,7 @@
 - **Automatic Task Execution**
 - **Daily Auto-Mining**
 - **Full Parallel Account Processing**
-- **Automatic Authentication**
+- **Automatic Authentication & Re-Authentication**
 - **Proxy Management System**
 
 ## Requirements
@@ -40,11 +40,8 @@
 
 3. Prepare configuration files:
    ```bash
-   # Create a file in the data folder with accounts for authentication
-   echo "your_email@example.com:password" > data/auth.txt
-   
-   # Create a file with accounts for mining
-   echo "your_email@example.com:password" > data/farm.txt
+   # Create a file in the data folder with your accounts
+   echo "your_email@example.com:password" > data/accounts.txt
    
    # For proxy usage (optional)
    echo "ip:port" > data/proxy.txt
@@ -60,20 +57,21 @@ python main.py
 ```
 
 After starting, you can choose the operation mode:
-1. **Account Authentication** - only authenticates accounts and saves tokens
-2. **Mining and Reward Collection** - runs the full account processing cycle
+1. **Mining and Reward Collection** - runs the full account processing cycle
+2. **Exit** - closes the program
 
 ## Key Features
 
 - **Maximum Efficiency**: All accounts are processed simultaneously in parallel tasks for optimal performance
 - **Automatic Recovery**: If an error occurs, account processing automatically restarts after a short pause
 - **Proxy Rotation**: Each account is assigned its own proxy server for load distribution
+- **Token Re-Authentication**: Automatically re-authenticates accounts when tokens expire
 
 ## Registration/Login
 
 - Visit [https://unich.com/en/airdrop](https://unich.com/en/airdrop/sign-up?ref=7AFR37) to register
 - Register or log in to your account
-- Add your account details to `data/auth.txt` in the format `email:password`
+- Add your account details to `data/accounts.txt` in the format `email:password`
 - The bot will automatically perform authentication and save the token
 
 ## Configuration

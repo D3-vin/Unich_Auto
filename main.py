@@ -15,7 +15,6 @@ from data.config import (
     MAX_CONCURRENCY, 
     CYCLE_INTERVAL, 
     REQUEST_DELAY, 
-    ENDPOINTS, 
     DATA_DIR, 
     FILES
 )
@@ -62,21 +61,32 @@ class HTTPClient:
 class Unich:
     def __init__(self) -> None:
         # API endpoints
-        self.site_url = ENDPOINTS["site_url"]
-        self.captcha_id = ENDPOINTS["captcha_id"]
-        self.auth_url = ENDPOINTS["auth_url"]
-        self.mining_start_url = ENDPOINTS["mining_start_url"]
-        self.social_list_url = ENDPOINTS["social_list_url"]
-        self.mining_recent_url = ENDPOINTS["mining_recent_url"]
-        self.ref_url = ENDPOINTS["ref_url"]
-        self.add_ref_url = ENDPOINTS["add_ref_url"]
-        self.social_claim_url = ENDPOINTS["social_claim_url"]
+        self.endpoints = {
+            "site_url": "https://unich.com/en/airdrop/sign-in",
+            "captcha_id": "e7baa772ac1ae5dceccd7273ad5f57bd",
+            "auth_url": "https://api.unich.com/airdrop/user/v1/auth/sign-in",
+            "mining_start_url": "https://api.unich.com/airdrop/user/v1/mining/start",
+            "social_list_url": "https://api.unich.com/airdrop/user/v1/social/list-by-user",
+            "mining_recent_url": "https://api.unich.com/airdrop/user/v1/mining/recent",
+            "ref_url": "https://api.unich.com/airdrop/user/v1/ref",
+            "add_ref_url": "https://api.unich.com/airdrop/user/v1/ref/refer-sign-up",
+            "social_claim_url": "https://api.unich.com/airdrop/user/v1/social/claim/"
+        }
+        
+        self.site_url = self.endpoints["site_url"]
+        self.captcha_id = self.endpoints["captcha_id"]
+        self.auth_url = self.endpoints["auth_url"]
+        self.mining_start_url = self.endpoints["mining_start_url"]
+        self.social_list_url = self.endpoints["social_list_url"]
+        self.mining_recent_url = self.endpoints["mining_recent_url"]
+        self.ref_url = self.endpoints["ref_url"]
+        self.add_ref_url = self.endpoints["add_ref_url"]
+        self.social_claim_url = self.endpoints["social_claim_url"]
         
         # File paths
         self.data_dir = DATA_DIR
         self.accounts_json = os.path.join(self.data_dir, FILES["accounts_json"])
-        self.auth_txt = os.path.join(self.data_dir, FILES["auth_txt"])
-        self.farm_txt = os.path.join(self.data_dir, FILES["farm_txt"])
+        self.accounts_txt = os.path.join(self.data_dir, FILES["accounts_txt"])
         self.proxy_txt = os.path.join(self.data_dir, FILES["proxy_txt"])
         
         # Create data directory if it doesn't exist
@@ -140,9 +150,9 @@ class Unich:
         """Load accounts from file based on operation mode
         
         Args:
-            mode: Operation mode - "farm" for farm.txt or "all" for accounts.txt
+            mode: Operation mode - always "farm" after menu change
         """
-        filename = self.farm_txt if mode == "farm" else self.auth_txt
+        filename = self.accounts_txt
         accounts = []
         try:
             if not os.path.exists(filename):
@@ -295,6 +305,7 @@ class Unich:
             self.http_client.session = self.http_client._create_session(proxy)
         self.http_client.session.headers.update({"Authorization": f"Bearer {token}"})
         return await self.http_client._make_request("get", self.ref_url, impersonate="chrome")
+        
 
     async def add_ref(self, token, ref_code=REF_CODE, proxy=None):
         """Add referral code"""
@@ -315,22 +326,52 @@ class Unich:
         """Asynchronous processing of one account with token"""
         try:
             self.print_account_message(email, proxy, Fore.CYAN, "Processing account")
-            
-            # Check referral information
-            ref_success, ref_data = await self.get_ref(token, proxy)
-            if ref_success and isinstance(ref_data, dict):
-                ref_info = ref_data.get("data", {}).get("referrer", {})
-                current_ref_code = ref_info.get("refCode")
-                
-                if not ref_info.get("referred", False):
-                    self.print_account_message(email, proxy, Fore.CYAN, f"Adding referral code {REF_CODE}")
-                    await self.add_ref(token, proxy=proxy)
-                    await self.async_delay()
-                else:
-                    self.print_account_message(email, proxy, Fore.GREEN, f"Referral code {current_ref_code} already added")
-            
+
             # Check mining status
             mining_success, mining_data = await self.get_recent_mining(token, proxy)
+            
+            # Check for unauthorized error and re-authenticate if needed
+            unauthorized = False
+            if not mining_success:
+                # Print the raw response for debugging
+                #self.print_account_message(email, proxy, Fore.YELLOW, f"Mining status response: {mining_data}")
+                
+                # Check multiple possible formats of the unauthorized error
+                if isinstance(mining_data, dict) and mining_data.get("code") == "UNAUTHORIZED":
+                    unauthorized = True
+                elif isinstance(mining_data, str) and "UNAUTHORIZED" in mining_data:
+                    unauthorized = True
+                elif isinstance(mining_data, str) and "Unauthorized" in mining_data:
+                    unauthorized = True
+                
+            if unauthorized:
+                self.print_account_message(email, proxy, Fore.YELLOW, "Token expired, attempting re-authentication")
+                
+                # Get account details from stored accounts
+                account_data = None
+                accounts = self.load_accounts()
+                for acc in accounts:
+                    if acc["email"] == email:
+                        account_data = acc
+                        break
+                
+                if account_data:
+                    # Re-authenticate account
+                    auth_success, new_token = await self.auth_account_async(account_data, proxy)
+                    if auth_success and new_token:
+                        self.print_account_message(email, proxy, Fore.GREEN, "Re-authentication successful")
+                        token = new_token  # Update token
+                        # Save the new token
+                        self.save_token_json(email, new_token)
+                        # Retry getting mining status with new token
+                        mining_success, mining_data = await self.get_recent_mining(token, proxy)
+                    else:
+                        self.print_account_message(email, proxy, Fore.RED, "Re-authentication failed")
+                        return  # Exit early if re-auth failed
+                else:
+                    self.print_account_message(email, proxy, Fore.RED, "Account data not found for re-authentication")
+                    return  # Exit early
+            
             if mining_success and isinstance(mining_data, dict):
                 mining_info = mining_data.get("data", {})
                 is_mining = mining_info.get("isMining", False)
@@ -351,9 +392,35 @@ class Unich:
                     if start_success:
                         self.print_account_message(email, proxy, Fore.GREEN, "Mining successfully started")
                     await self.async_delay()
-            
+            else:
+                self.print_account_message(email, proxy, Fore.RED, f"Failed to get mining status: {mining_data}")
+                return  # Exit if we couldn't get mining status
+                
+            # Check referral information and valid
+            ref_success, ref_data = await self.get_ref(token, proxy)
+            # Check for unauthorized error and exit since we've already tried re-auth
+            if not ref_success and isinstance(ref_data, dict) and ref_data.get("code") == "UNAUTHORIZED":
+                self.print_account_message(email, proxy, Fore.RED, "Token unauthorized for referral check")
+                return
+                
+            if ref_success and isinstance(ref_data, dict):
+                ref_info = ref_data.get("data", {}).get("referrer", {})
+                current_ref_code = ref_info.get("refCode")
+                
+                if not ref_info.get("referred", False):
+                    self.print_account_message(email, proxy, Fore.CYAN, f"Adding referral code {REF_CODE}")
+                    await self.add_ref(token, proxy=proxy)
+                    await self.async_delay()
+                else:
+                    self.print_account_message(email, proxy, Fore.GREEN, f"Referral code {current_ref_code} already added")
+
             # Get and process social tasks
             social_success, social_data = await self.get_social_list(token, proxy)
+            # Check for unauthorized error and exit since we've already tried re-auth
+            if not social_success and isinstance(social_data, dict) and social_data.get("code") == "UNAUTHORIZED":
+                self.print_account_message(email, proxy, Fore.RED, "Token unauthorized for social tasks")
+                return
+                
             if social_success and isinstance(social_data, dict):
                 tasks_data = social_data.get("data", {}).get("items", [])
                 unclaimed_tasks = [task for task in tasks_data if not task.get("claimed", False)]
@@ -448,16 +515,17 @@ class Unich:
     def print_menu(self):
         """Display operation mode selection menu"""
         print(f"{Fore.CYAN + Style.BRIGHT}Select operation mode:{Style.RESET_ALL}")
-        print(f"{Fore.WHITE}1. Account Authentication")
-        print(f"2. Mining and Reward Collection{Style.RESET_ALL}")
+        print(f"{Fore.WHITE}1. Mining and Reward Collection")
+        print(f"2. Exit{Style.RESET_ALL}")
         
         while True:
             try:
                 choice = int(input(f"{Fore.YELLOW + Style.BRIGHT}Enter number [1/2]: {Style.RESET_ALL}"))
-                if choice in [1, 2]:
-                    mode = "auth" if choice == 1 else "farm"
-                    #self.log(f"{Fore.GREEN}Selected mode: {mode.upper()}{Style.RESET_ALL}")
-                    return mode
+                if choice == 1:
+                    return "farm"
+                elif choice == 2:
+                    self.log(f"{Fore.GREEN}Exiting program{Style.RESET_ALL}")
+                    exit(0)
                 else:
                     print(f"{Fore.RED + Style.BRIGHT}Please enter 1 or 2{Style.RESET_ALL}")
             except ValueError:
@@ -468,11 +536,11 @@ class Unich:
         while True:
             try:
                 # Read accounts and proxies
-                accounts = self.load_accounts(mode)
+                accounts = self.load_accounts()
                 await self.load_proxies()
                 
                 if not accounts:
-                    self.log(f"{Fore.RED + Style.BRIGHT}No accounts found in file {self.farm_txt if mode == 'farm' else self.auth_txt}{Style.RESET_ALL}")
+                    self.log(f"{Fore.RED + Style.BRIGHT}No accounts found in file {self.accounts_txt}{Style.RESET_ALL}")
                     await asyncio.sleep(300)  # Wait 5 minutes and try again
                     continue
                 
@@ -496,13 +564,10 @@ class Unich:
                     if email in email_to_token:
                         token = email_to_token[email]
                         self.print_account_message(email, proxy, Fore.GREEN, "Token found in cache")
-                        
-                        # In farm mode start mining, in auth mode only authenticate
-                        if mode == "farm":
-                            processing_tasks.append((email, token, proxy))
+                        processing_tasks.append((email, token, proxy))
                     else:
                         # If no token, prepare for authentication
-                        self.print_account_message(email, proxy, Fore.YELLOW, "Token not found, queued for authentication")
+                        self.print_account_message(email, proxy, Fore.YELLOW, "Token not found, waiting for authentication")
                         # Add to auth tasks
                         auth_tasks.append((account, proxy))
                 
@@ -527,20 +592,18 @@ class Unich:
                             success, token = result
                             if success and token:
                                 self.print_account_message(email, proxy, Fore.GREEN, "Authentication successful")
-                                
-                                # In farm mode start mining
-                                if mode == "farm":
-                                    processing_tasks.append((email, token, proxy))
+                                processing_tasks.append((email, token, proxy))
                             else:
                                 self.print_account_message(email, proxy, Fore.RED, "Authentication failed")
                 
                 # Create processing coroutines
                 process_coroutines = [self.process_account_async(email, token, proxy) for email, token, proxy in processing_tasks]
                 
-                # If in auth mode or no tasks, exit loop
-                if mode == "auth" or not process_coroutines:
-                    self.log(f"{Fore.GREEN}Completed processing accounts in {mode.upper()} mode{Style.RESET_ALL}")
-                    break
+                # If no tasks, wait and try again
+                if not process_coroutines:
+                    self.log(f"{Fore.YELLOW}No accounts to process. Retrying in 5 minutes.{Style.RESET_ALL}")
+                    await asyncio.sleep(300)  # Wait 5 minutes before retry
+                    continue
                 
                 # Start all processing tasks simultaneously
                 self.log(f"{Fore.CYAN}Starting mining for {len(process_coroutines)} accounts in parallel{Style.RESET_ALL}")
@@ -565,7 +628,7 @@ class Unich:
             # Select operation mode
             mode = self.print_menu()
             
-            self.log(f"{Fore.CYAN + Style.BRIGHT}Starting Unich bot in {mode.upper()} mode{Style.RESET_ALL}")
+            self.log(f"{Fore.CYAN + Style.BRIGHT}Starting Unich bot in mining mode{Style.RESET_ALL}")
             await self.process_all_accounts_async(mode)
             
             self.log(f"{Fore.GREEN + Style.BRIGHT}Bot operation completed.{Style.RESET_ALL}")
