@@ -27,6 +27,7 @@ class HTTPClient:
     
     def __init__(self, proxy=None):
         self.session = self._create_session(proxy)
+        self.current_proxy = proxy
         
     def _create_session(self, proxy=None):
         """Create and configure session"""
@@ -49,7 +50,9 @@ class HTTPClient:
         return session
     
     async def _make_request(self, method, url, **kwargs):
-        """Make HTTP request with error handling"""
+        """Make HTTP request with error handling and print proxy info for debug"""
+        proxy_info = self.session.proxies.get('http') or self.session.proxies.get('https')
+        #print(f"[HTTPClient] Sending {method.upper()} request to {url} via proxy: {proxy_info}")
         try:
             response = getattr(self.session, method.lower())(url, **kwargs)
             if 200 <= response.status_code < 300:
@@ -63,7 +66,7 @@ class Unich:
         # API endpoints
         self.endpoints = {
             "site_url": "https://unich.com/en/airdrop/sign-in",
-            "captcha_id": "e7baa772ac1ae5dceccd7273ad5f57bd",
+            "sitekey": "6LdEl4grAAAAAB8fg8oGNPZhhcUbR4uuM8VQI0H0",
             "auth_url": "https://api.unich.com/airdrop/user/v1/auth/sign-in",
             "mining_start_url": "https://api.unich.com/airdrop/user/v1/mining/start",
             "social_list_url": "https://api.unich.com/airdrop/user/v1/social/list-by-user",
@@ -74,7 +77,7 @@ class Unich:
         }
         
         self.site_url = self.endpoints["site_url"]
-        self.captcha_id = self.endpoints["captcha_id"]
+        self.sitekey = self.endpoints["sitekey"]
         self.auth_url = self.endpoints["auth_url"]
         self.mining_start_url = self.endpoints["mining_start_url"]
         self.social_list_url = self.endpoints["social_list_url"]
@@ -464,25 +467,20 @@ class Unich:
             
             # Send captcha for solving (synchronously as library doesn't support async)
             self.print_account_message(email, proxy, Fore.CYAN, "Solving captcha")
-            result = self.solver.geetest_v4(captcha_id=self.captcha_id, url=self.site_url)
-            
+            result = self.solver.recaptcha(sitekey=self.sitekey, url=self.site_url)
+            print(result)
             # Parse JSON string from result['code']
-            captcha_data = json.loads(result['code'])
+            captcha_token = result['code']
             
-            # Get captcha parameters
-            captcha_params = {
-                "lot_number": captcha_data["lot_number"],
-                "pass_token": captcha_data["pass_token"],
-                "gen_time": captcha_data["gen_time"],
-                "captcha_output": captcha_data["captcha_output"]
+            json = {
+                "email": account['email'],
+                "password": account['password'],
+                "g-recaptcha-response": captcha_token
             }
-            
-            # Combine data
-            payload = {**account, **captcha_params}
-            
+
             # Send authentication request with curl_cffi
             self.print_account_message(email, proxy, Fore.CYAN, "Sending authentication request")
-            response = session.post(self.auth_url, json=payload, impersonate="chrome")
+            response = session.post(self.auth_url, json=json, impersonate="chrome")
             
             # Check response status (2xx is considered successful)
             if 200 <= response.status_code < 300:
