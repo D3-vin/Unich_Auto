@@ -468,7 +468,7 @@ class Unich:
             # Send captcha for solving (synchronously as library doesn't support async)
             self.print_account_message(email, proxy, Fore.CYAN, "Solving captcha")
             result = self.solver.recaptcha(sitekey=self.sitekey, url=self.site_url)
-            print(result)
+            #print(result)
             # Parse JSON string from result['code']
             captcha_token = result['code']
             
