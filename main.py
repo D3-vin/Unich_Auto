@@ -506,7 +506,7 @@ class Unich:
                     self.print_account_message(email, proxy, Fore.GREEN, f"Captcha solved successfully on attempt {attempt + 1}")
                     return verification_result
                 else:
-                    self.print_account_message(email, proxy, Fore.YELLOW, f"Unexpected verification response: {verification_result}")
+                    #self.print_account_message(email, proxy, Fore.YELLOW, f"Unexpected verification response: {verification_result}")
                     if attempt < CAPTCHA_MAX_ATTEMPTS - 1:
                         await asyncio.sleep(2)
                         continue
