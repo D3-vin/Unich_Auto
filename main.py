@@ -3,21 +3,23 @@ import time
 import random
 import asyncio
 import os
-from twocaptcha import TwoCaptcha
+from typing import Optional
+
 from curl_cffi import requests
 from datetime import datetime
 from colorama import Fore, Style, init
 
 # Import settings from data/config.py
 from data.config import (
-    API_KEY_2CAPTCHA, 
     REF_CODE, 
     MAX_CONCURRENCY, 
     CYCLE_INTERVAL, 
     REQUEST_DELAY, 
     DATA_DIR, 
-    FILES
+    FILES,
+    CAPTCHA_MAX_ATTEMPTS
 )
+from data.captcha_solver import CaptchaSolver
 
 # Initialize colorama for Windows
 init(autoreset=True)
@@ -65,8 +67,6 @@ class Unich:
     def __init__(self) -> None:
         # API endpoints
         self.endpoints = {
-            "site_url": "https://unich.com/en/airdrop/sign-in",
-            "sitekey": "6LdEl4grAAAAAB8fg8oGNPZhhcUbR4uuM8VQI0H0",
             "auth_url": "https://api.unich.com/airdrop/user/v1/auth/sign-in",
             "mining_start_url": "https://api.unich.com/airdrop/user/v1/mining/start",
             "social_list_url": "https://api.unich.com/airdrop/user/v1/social/list-by-user",
@@ -76,8 +76,7 @@ class Unich:
             "social_claim_url": "https://api.unich.com/airdrop/user/v1/social/claim/"
         }
         
-        self.site_url = self.endpoints["site_url"]
-        self.sitekey = self.endpoints["sitekey"]
+
         self.auth_url = self.endpoints["auth_url"]
         self.mining_start_url = self.endpoints["mining_start_url"]
         self.social_list_url = self.endpoints["social_list_url"]
@@ -100,8 +99,12 @@ class Unich:
         self.proxy_index = 0
         self.account_proxies = {}
         
-        # Initialize 2Captcha
-        self.solver = TwoCaptcha(API_KEY_2CAPTCHA)
+        # Initialize captcha solver
+        self.captcha_solver = CaptchaSolver()
+        
+        # Captcha API settings
+        self.challenge_url = "https://altcha.unich.com/v1/challenge"
+        self.api_key_param = "key_1j2cbs5t800224sit61"
         
         # Initialize HTTP client
         self.http_client = HTTPClient()
@@ -281,33 +284,271 @@ class Unich:
         delay = random.uniform(self.request_delay[0], self.request_delay[1])
         await asyncio.sleep(delay)
 
+    async def get_captcha_challenge(self, proxy=None) -> Optional[dict]:
+        """Получить задачу капчи с API Unich"""
+        try:
+            url = f"{self.challenge_url}?apiKey={self.api_key_param}"
+            # Создаем новую сессию без заголовков авторизации для получения капчи
+            session = requests.Session()
+            session.verify = False
+            session.headers.update({"Content-Type": "application/json"})
+            
+            # Добавляем прокси если указан
+            if proxy:
+                if not proxy.startswith(("http://", "https://")):
+                    proxy = f"http://{proxy}"
+                session.proxies.clear()
+                session.proxies.update({"http": proxy, "https": proxy})
+            
+            response = session.get(url, timeout=30)
+            
+            if response.status_code == 200:
+                return response.json()
+            else:
+                self.log(f"Error getting captcha: {response.status_code}")
+                return None
+                
+        except Exception as e:
+            self.log(f"Error while getting captcha: {str(e)}")
+            return None
+
+    async def verify_captcha_solution(self, code: str, payload: str, proxy=None) -> Optional[str]:
+        """Верифицировать решение капчи и получить payload"""
+        try:
+            url = f"https://altcha.unich.com/v1/verify?apiKey={self.api_key_param}"
+            
+            # Создаем новую сессию без заголовков авторизации
+            session = requests.Session()
+            session.verify = False
+            session.headers.update({"Content-Type": "application/json"})
+            
+            # Добавляем прокси если указан
+            if proxy:
+                if not proxy.startswith(("http://", "https://")):
+                    proxy = f"http://{proxy}"
+                session.proxies.clear()
+                session.proxies.update({"http": proxy, "https": proxy})
+            
+            data = {
+                "code": code,
+                "payload": payload,
+                "timeZone": "Europe/Moscow"
+            }
+            
+            response = session.post(url, json=data, timeout=30)
+            
+            if response.status_code == 200:
+                result = response.json()
+                if result.get("verified", False):
+                    #self.log("Captcha verified successfully")
+                    return result.get("payload")
+                else:
+                    #self.log(f"Captcha verification failed: {result}")
+                    # Возвращаем полный результат для анализа причины
+                    return result
+            else:
+                #self.log(f"Captcha verification error: {response.status_code}")
+                return None
+                
+        except Exception as e:
+            #self.log(f"Error during captcha verification: {str(e)}")
+            return None
+
+    def solve_altcha_challenge(self, challenge_hash: str, salt: str, algorithm: str, max_number: int, email=None, proxy=None) -> Optional[int]:
+        """Решение числовой ALTCHA задачи"""
+        import hashlib
+        
+        # Выбираем алгоритм хеширования
+        if algorithm == "SHA-256":
+            hash_func = hashlib.sha256
+        elif algorithm == "SHA-1":
+            hash_func = hashlib.sha1
+        elif algorithm == "SHA-512":
+            hash_func = hashlib.sha512
+        else:
+            if email:
+                self.print_account_message(email, proxy, Fore.RED, f"Unsupported algorithm: {algorithm}")
+            else:
+                self.log(f"Unsupported algorithm: {algorithm}")
+            return None
+        
+        # Перебираем числа от 0 до max_number
+        for number in range(max_number + 1):
+            # Создаем строку для хеширования: salt + number
+            test_string = salt + str(number)
+            # Хешируем
+            hash_result = hash_func(test_string.encode()).hexdigest()
+            # Проверяем совпадение
+            if hash_result == challenge_hash:
+                if email:
+                    self.print_account_message(email, proxy, Fore.GREEN, f"Solution found: {number}")
+                else:
+                    self.log(f"Solution found: {number}")
+                return number
+        
+        return None
+
+    async def get_captcha_token(self, email=None, proxy=None) -> Optional[str]:
+        """Получить payload капчи - основной метод с повторными попытками"""
+        for attempt in range(CAPTCHA_MAX_ATTEMPTS):
+            try:
+                self.print_account_message(email, proxy, Fore.CYAN, f"Captcha attempt {attempt + 1}/{CAPTCHA_MAX_ATTEMPTS}")
+                
+                # Получаем задачу капчи
+                challenge_data = await self.get_captcha_challenge(proxy)
+                if not challenge_data:
+                    self.print_account_message(email, proxy, Fore.RED, "Failed to get captcha challenge")
+                    if attempt < CAPTCHA_MAX_ATTEMPTS - 1:
+                        await asyncio.sleep(2)
+                        continue
+                    return None
+                
+                # Извлекаем данные из ответа для гибридной капчи
+                code_challenge = challenge_data.get('codeChallenge', {})
+                image_base64 = code_challenge.get('image')
+                
+                # Извлекаем данные для ALTCHA числовой задачи
+                algorithm = challenge_data.get('algorithm', 'SHA-256')
+                challenge_hash = challenge_data.get('challenge')
+                max_number = challenge_data.get('maxnumber', 100000)
+                salt = challenge_data.get('salt')
+                signature = challenge_data.get('signature')
+                
+                if not image_base64:
+                    self.print_account_message(email, proxy, Fore.RED, "Captcha image not found in response")
+                    if attempt < CAPTCHA_MAX_ATTEMPTS - 1:
+                        await asyncio.sleep(2)
+                        continue
+                    return None
+                    
+                if not challenge_hash or not salt or not signature:
+                    self.print_account_message(email, proxy, Fore.RED, "ALTCHA challenge data not found in response")
+                    if attempt < CAPTCHA_MAX_ATTEMPTS - 1:
+                        await asyncio.sleep(2)
+                        continue
+                    return None
+                
+                # Декодируем изображение и получаем буквенный код
+                clean_image_data = self.captcha_solver.decode_base64_image(image_base64)
+                if not clean_image_data:
+                    self.print_account_message(email, proxy, Fore.RED, "Failed to decode image data")
+                    if attempt < CAPTCHA_MAX_ATTEMPTS - 1:
+                        await asyncio.sleep(2)
+                        continue
+                    return None
+                
+                # Решаем буквенную капчу (получаем код типа "WMCMW")
+                image_code, success, task_id = await self.captcha_solver.solve_image_captcha(clean_image_data)
+                if not success:
+                    self.print_account_message(email, proxy, Fore.RED, f"Error solving image captcha: {image_code}")
+                    if attempt < CAPTCHA_MAX_ATTEMPTS - 1:
+                        await asyncio.sleep(2)
+                        continue
+                    return None
+                
+                # Решаем числовую ALTCHA задачу
+                self.print_account_message(email, proxy, Fore.CYAN, "Solving numerical ALTCHA challenge...")
+                number_solution = self.solve_altcha_challenge(challenge_hash, salt, algorithm, max_number, email, proxy)
+                if number_solution is None:
+                    self.print_account_message(email, proxy, Fore.RED, "Failed to solve ALTCHA challenge")
+                    if attempt < CAPTCHA_MAX_ATTEMPTS - 1:
+                        await asyncio.sleep(2)
+                        continue
+                    return None
+                
+                # Создаем payload для верификации
+                payload_data = {
+                    "algorithm": algorithm,
+                    "challenge": challenge_hash,
+                    "number": number_solution,
+                    "salt": salt,
+                    "signature": signature,
+                    "took": 167
+                }
+                
+                # Кодируем payload в base64
+                import base64
+                import json
+                payload_json = json.dumps(payload_data, separators=(',', ':'))
+                payload_base64 = base64.b64encode(payload_json.encode()).decode()
+                
+                # Верифицируем с буквенным кодом и числовым payload
+                verification_result = await self.verify_captcha_solution(image_code, payload_base64, proxy)
+                
+                # Проверяем результат верификации
+                if verification_result is None:
+                    self.print_account_message(email, proxy, Fore.RED, "Captcha verification error")
+                    if attempt < CAPTCHA_MAX_ATTEMPTS - 1:
+                        await asyncio.sleep(2)
+                        continue
+                    return None
+                    
+                # Если верификация не прошла из-за неправильного кода, сообщаем об этом
+                if isinstance(verification_result, dict) and verification_result.get("reason") == "INCORRECT_CODE":
+                    self.print_account_message(email, proxy, Fore.YELLOW, "Incorrect letter code, reporting to 2captcha")
+                    if task_id:
+                        report_result, report_success = await self.captcha_solver.report_bad(task_id)
+                        if report_success:
+                            self.print_account_message(email, proxy, Fore.GREEN, "Reported incorrect solution to 2captcha")
+                        else:
+                            self.print_account_message(email, proxy, Fore.RED, f"Error reporting incorrect solution: {report_result}")
+                    else:
+                        self.print_account_message(email, proxy, Fore.RED, "Task ID not found, could not report incorrect solution")
+                    
+                    # Пробуем еще раз
+                    if attempt < CAPTCHA_MAX_ATTEMPTS - 1:
+                        await asyncio.sleep(2)
+                        continue
+                    return None
+                
+                # Если верификация прошла успешно
+                if isinstance(verification_result, str):
+                    self.print_account_message(email, proxy, Fore.GREEN, f"Captcha solved successfully on attempt {attempt + 1}")
+                    return verification_result
+                else:
+                    self.print_account_message(email, proxy, Fore.YELLOW, f"Unexpected verification response: {verification_result}")
+                    if attempt < CAPTCHA_MAX_ATTEMPTS - 1:
+                        await asyncio.sleep(2)
+                        continue
+                    return None
+                
+            except Exception as e:
+                self.print_account_message(email, proxy, Fore.RED, f"Error getting captcha payload (attempt {attempt + 1}): {str(e)}")
+                if attempt < CAPTCHA_MAX_ATTEMPTS - 1:
+                    await asyncio.sleep(2)
+                    continue
+                return None
+        
+        self.print_account_message(email, proxy, Fore.RED, f"Failed to solve captcha after {CAPTCHA_MAX_ATTEMPTS} attempts")
+        return None
+
     async def start_mining(self, token, proxy=None):
         """Start mining"""
         if proxy:
             self.http_client.session = self.http_client._create_session(proxy)
         self.http_client.session.headers.update({"Authorization": f"Bearer {token}"})
-        return await self.http_client._make_request("post", self.mining_start_url, json={}, impersonate="chrome")
+        return await self.http_client._make_request("post", self.mining_start_url, json={}, impersonate="chrome136")
 
     async def get_social_list(self, token, proxy=None):
         """Get social tasks list"""
         if proxy:
             self.http_client.session = self.http_client._create_session(proxy)
         self.http_client.session.headers.update({"Authorization": f"Bearer {token}"})
-        return await self.http_client._make_request("get", self.social_list_url, impersonate="chrome")
+        return await self.http_client._make_request("get", self.social_list_url, impersonate="chrome136")
 
     async def get_recent_mining(self, token, proxy=None):
         """Get mining data"""
         if proxy:
             self.http_client.session = self.http_client._create_session(proxy)
         self.http_client.session.headers.update({"Authorization": f"Bearer {token}"})
-        return await self.http_client._make_request("get", self.mining_recent_url, impersonate="chrome")
+        return await self.http_client._make_request("get", self.mining_recent_url, impersonate="chrome136")
 
     async def get_ref(self, token, proxy=None):
         """Get referral information"""
         if proxy:
             self.http_client.session = self.http_client._create_session(proxy)
         self.http_client.session.headers.update({"Authorization": f"Bearer {token}"})
-        return await self.http_client._make_request("get", self.ref_url, impersonate="chrome")
+        return await self.http_client._make_request("get", self.ref_url, impersonate="chrome136")
         
 
     async def add_ref(self, token, ref_code=REF_CODE, proxy=None):
@@ -315,7 +556,7 @@ class Unich:
         if proxy:
             self.http_client.session = self.http_client._create_session(proxy)
         self.http_client.session.headers.update({"Authorization": f"Bearer {token}"})
-        return await self.http_client._make_request("post", self.add_ref_url, json={"code": ref_code}, impersonate="chrome")
+        return await self.http_client._make_request("post", self.add_ref_url, json={"code": ref_code}, impersonate="chrome136")
 
     async def claim_social_reward(self, token, task_id, proxy=None):
         """Claim social task reward"""
@@ -323,7 +564,7 @@ class Unich:
             self.http_client.session = self.http_client._create_session(proxy)
         self.http_client.session.headers.update({"Authorization": f"Bearer {token}"})
         url = f"{self.social_claim_url}{task_id}"
-        return await self.http_client._make_request("post", url, json={"evidence": task_id}, impersonate="chrome")
+        return await self.http_client._make_request("post", url, json={"evidence": task_id}, impersonate="chrome136")
 
     async def process_account_async(self, email, token, proxy=None):
         """Asynchronous processing of one account with token"""
@@ -465,22 +706,22 @@ class Unich:
             # Create session with proxy
             session = self.http_client._create_session(proxy)
             
-            # Send captcha for solving (synchronously as library doesn't support async)
+            # Send captcha for solving using new API with retries
             self.print_account_message(email, proxy, Fore.CYAN, "Solving captcha")
-            result = self.solver.recaptcha(sitekey=self.sitekey, url=self.site_url)
-            #print(result)
-            # Parse JSON string from result['code']
-            captcha_token = result['code']
+            captcha_token = await self.get_captcha_token(email, proxy)
+            if not captcha_token:
+                self.print_account_message(email, proxy, Fore.RED, f"Failed to solve captcha after {CAPTCHA_MAX_ATTEMPTS} attempts")
+                return False, None
             
             json = {
                 "email": account['email'],
                 "password": account['password'],
-                "g-recaptcha-response": captcha_token
+                "altcha-token": captcha_token
             }
 
             # Send authentication request with curl_cffi
             self.print_account_message(email, proxy, Fore.CYAN, "Sending authentication request")
-            response = session.post(self.auth_url, json=json, impersonate="chrome")
+            response = session.post(self.auth_url, json=json, impersonate="chrome136")
             
             # Check response status (2xx is considered successful)
             if 200 <= response.status_code < 300:
