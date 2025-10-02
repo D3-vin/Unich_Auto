@@ -1,7 +1,7 @@
 from typing import Dict, Tuple
 
-# API key for captcha solving service
-API_KEY_2CAPTCHA: str = "api"  # Replace with your 2Captcha key
+# Captcha solver settings
+API_KEY: str = "api"  # 2captcha API key
 
 # Referral program settings
 REF_CODE: str = "7AFR37"  # Default referral code
