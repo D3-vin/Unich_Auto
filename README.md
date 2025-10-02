@@ -1,18 +1,12 @@
-# UNICH AUTO MINING BOT
+# 🚀 UNICH Bot - Automation for UNICH
 
-<div align="center">
+## 📢 Connect with Us
 
-  <p align="center">
-    <a href="https://t.me/cry_batya">
-      <img src="https://img.shields.io/badge/Telegram-Channel-blue?style=for-the-badge&logo=telegram" alt="Telegram Channel">
-    </a>
-    <a href="https://t.me/+b0BPbs7V1aE2NDFi">
-      <img src="https://img.shields.io/badge/Telegram-Chat-blue?style=for-the-badge&logo=telegram" alt="Telegram Chat">
-    </a>
-  </p>
-</div>
+- **📢 Channel**: [https://t.me/D3_vin](https://t.me/D3_vin) - Latest updates and releases
+- **💬 Chat**: [https://t.me/D3vin_chat](https://t.me/D3vin_chat) - Community support and discussions
+- **📁 GitHub**: [https://github.com/D3-vin](https://github.com/D3-vin) - Source code and development
 
-## Features
+## ✨ Key Features
 
 - **Automatic Task Execution**
 - **Daily Auto-Mining**

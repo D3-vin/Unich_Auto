@@ -2,33 +2,31 @@ import asyncio
 import base64
 from typing import Any, Tuple, Optional
 import httpx
-from data.config import API_KEY_2CAPTCHA
+from data.config import API_KEY
 
 
 class CaptchaSolver:
-    """Асинхронный класс для решения капчи через 2captcha API"""
+    """Async captcha solver for 2captcha API"""
     
     BASE_URL = "https://api.2captcha.com"
     
     def __init__(self, max_attempts: int = 30):
-        self.api_key = API_KEY_2CAPTCHA
+        self.api_key = API_KEY
         self.max_attempts = max_attempts
         self.client = httpx.AsyncClient(timeout=30)
     
     def decode_base64_image(self, base64_data: str) -> Optional[str]:
-        """Декодировать base64 изображение и вернуть чистые данные"""
+        """Decode base64 image and return clean data"""
         try:
-            # Убираем префикс data:image/jpeg;base64,
             if base64_data.startswith("data:image"):
                 base64_data = base64_data.split(",", 1)[1]
-            
             return base64_data
         except Exception as e:
             print(f"Error decoding image: {str(e)}")
             return None
     
     async def solve_image_captcha(self, image_base64: str) -> Tuple[str, bool, Optional[int]]:
-        """Решить капчу-изображение через 2captcha, возвращает (решение, успех, task_id)"""
+        """Solve image captcha using 2captcha API, returns (solution, success, task_id)"""
         try:
             captcha_data = {
                 "clientKey": self.api_key,
@@ -38,7 +36,7 @@ class CaptchaSolver:
                     "body": image_base64,
                     "phrase": False,
                     "case": True,
-                    "numeric": 0,  # Любые символы
+                    "numeric": 0,
                     "math": False,
                     "minLength": 4,
                     "maxLength": 8,
@@ -64,7 +62,7 @@ class CaptchaSolver:
             return f"An unexpected error occurred: {err}", False, None
     
     async def get_captcha_result(self, task_id: int | str) -> Tuple[str, bool]:
-        """Получить результат решения капчи"""
+        """Get captcha solution result"""
         for _ in range(self.max_attempts):
             try:
                 resp = await self.client.post(
@@ -92,7 +90,7 @@ class CaptchaSolver:
         return "Max time for solving exhausted", False
     
     async def report_bad(self, task_id: str | int) -> Tuple[Any, bool]:
-        """Сообщить о неправильном решении капчи"""
+        """Report incorrect captcha solution"""
         try:
             resp = await self.client.post(
                 f"{self.BASE_URL}/reportIncorrect",
@@ -106,5 +104,5 @@ class CaptchaSolver:
             return f"An unexpected error occurred: {err}", False
     
     async def close(self):
-        """Закрыть HTTP клиент"""
+        """Close HTTP client"""
         await self.client.aclose()

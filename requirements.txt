@@ -1,3 +1,5 @@
 curl-cffi
 colorama
 httpx
+requests
+rich

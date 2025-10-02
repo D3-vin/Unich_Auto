@@ -20,6 +20,7 @@ from data.config import (
     CAPTCHA_MAX_ATTEMPTS
 )
 from data.captcha_solver import CaptchaSolver
+from menu import get_menu
 
 # Initialize colorama for Windows
 init(autoreset=True)
@@ -753,22 +754,18 @@ class Unich:
 
     def print_menu(self):
         """Display operation mode selection menu"""
-        print(f"{Fore.CYAN + Style.BRIGHT}Select operation mode:{Style.RESET_ALL}")
-        print(f"{Fore.WHITE}1. Mining and Reward Collection")
-        print(f"2. Exit{Style.RESET_ALL}")
+        menu = get_menu()
+        choice = menu.show_menu()
         
-        while True:
-            try:
-                choice = int(input(f"{Fore.YELLOW + Style.BRIGHT}Enter number [1/2]: {Style.RESET_ALL}"))
-                if choice == 1:
-                    return "farm"
-                elif choice == 2:
-                    self.log(f"{Fore.GREEN}Exiting program{Style.RESET_ALL}")
-                    exit(0)
-                else:
-                    print(f"{Fore.RED + Style.BRIGHT}Please enter 1 or 2{Style.RESET_ALL}")
-            except ValueError:
-                print(f"{Fore.RED + Style.BRIGHT}Invalid input. Please enter a number.{Style.RESET_ALL}")
+        if choice == 1:
+            return "farm"
+        elif choice == 2:
+            return "social"
+        elif choice == 3:
+            self.log(f"{Fore.GREEN}Exiting program{Style.RESET_ALL}")
+            exit(0)
+        else:
+            return "farm"
 
     async def process_all_accounts_async(self, mode="farm"):
         """Main asynchronous function that starts processing all accounts"""
@@ -859,7 +856,8 @@ class Unich:
     async def main(self):
         """Main bot startup method"""
         try:
-            self.welcome()
+            menu = get_menu()
+            menu.show_welcome()
             
             # Check for data directory
             self.ensure_data_dir()
@@ -867,8 +865,19 @@ class Unich:
             # Select operation mode
             mode = self.print_menu()
             
-            self.log(f"{Fore.CYAN + Style.BRIGHT}Starting Unich bot in mining mode{Style.RESET_ALL}")
-            await self.process_all_accounts_async(mode)
+            
+            # Get account count for display
+            accounts = self.load_accounts()
+            account_count = len(accounts) if accounts else 0
+            
+            menu.show_operation_info("Unich Bot", account_count)
+            
+            if mode == "farm":
+                self.log(f"{Fore.CYAN + Style.BRIGHT}Starting Unich bot in mining mode{Style.RESET_ALL}")
+                await self.process_all_accounts_async(mode)
+            elif mode == "social":
+                self.log(f"{Fore.CYAN + Style.BRIGHT}Starting social tasks{Style.RESET_ALL}")
+                await self.process_social_tasks()
             
             self.log(f"{Fore.GREEN + Style.BRIGHT}Bot operation completed.{Style.RESET_ALL}")
             
@@ -876,6 +885,34 @@ class Unich:
             self.log(f"{Fore.YELLOW + Style.BRIGHT}Program stopped by user{Style.RESET_ALL}")
         except Exception as e:
             self.log(f"{Fore.RED + Style.BRIGHT}Critical error: {str(e)}{Style.RESET_ALL}")
+    
+    async def process_social_tasks(self):
+        """Process social tasks for all accounts"""
+        accounts = self.load_accounts()
+        if not accounts:
+            self.log(f"{Fore.RED}No accounts found{Style.RESET_ALL}")
+            return
+        
+        tokens = self.get_tokens_by_emails([acc["email"] for acc in accounts])
+        
+        for account in accounts:
+            email = account["email"]
+            if email in tokens:
+                proxy = self.get_next_proxy_for_account(email)
+                await self.process_social_tasks_for_account(tokens[email], email, proxy)
+    
+    async def process_social_tasks_for_account(self, token, email, proxy):
+        """Process social tasks for a single account"""
+        try:
+            # Get social tasks
+            success, social_data = await self.get_social_list(token, proxy)
+            if success and social_data:
+                self.log(f"{Fore.CYAN}Processing social tasks for {email}{Style.RESET_ALL}")
+                # Add social task processing logic here
+            else:
+                self.log(f"{Fore.YELLOW}No social tasks available for {email}{Style.RESET_ALL}")
+        except Exception as e:
+            self.log(f"{Fore.RED}Error processing social tasks for {email}: {str(e)}{Style.RESET_ALL}")
 
 if __name__ == "__main__":
     try:
